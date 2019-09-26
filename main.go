@@ -93,6 +93,9 @@ func main() {
 		{Name: "pedestal", Description: "3-tier white-colored pedestal.", Stock: 1},
 		{Name: "desk", Description: "Black wooden desk.", Stock: 15},
 		{Name: "monitor", Description: "LG monitor complete with cable.", Stock: 2},
+		{Name: "monitor", Description: "Samsung monitor complete with cable.", Stock: 2},
+		{Name: "monitor", Description: "Apple monitor complete with cable.", Stock: 2},
+		{Name: "monitor", Description: "Dell monitor complete with cable.", Stock: 2},
 		{Name: "laptop", Description: "Macbook Pro 2017 13-inch.", Stock: 30},
 		{Name: "mouse", Description: "Logitech M100 black mouse.", Stock: 4},
 		{Name: "mouse pad", Description: "Plain black mouse pad.", Stock: 100},
@@ -119,20 +122,14 @@ func main() {
 		panic(err)
 	}
 
-	// Update a item by the update API of Elasticsearch.
-	// We just increment the number of stock.
-	update, err := client.Update().Index(indexName).Type("item").Id("1").
-		Script(elastic.NewScriptInline("ctx._source.stock += params.num").Lang("painless").Param("num", 1)).
-		Upsert(map[string]interface{}{"stock": 0}).
-		Do(ctx)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("New version of item %q is now %d\n", update.Id, update.Version)
-
 	// Page
 	welcome := schema.Welcome{"Nakama"}
-	templates := template.Must(template.ParseFiles("templates/landing-page.html", "templates/item.html", "templates/create.html", "templates/list.html"))
+	templates := template.Must(template.ParseFiles(
+		"templates/landing-page.html",
+		"templates/item.html",
+		"templates/create.html",
+		"templates/list.html",
+		"templates/edit.html"))
 	http.Handle("/static/", //final url can be anything
 		http.StripPrefix("/static/",
 			http.FileServer(http.Dir("static"))))
@@ -187,7 +184,6 @@ func main() {
 	})
 
 	// Create item page
-	// Landing page
 	http.HandleFunc("/create/", func(w http.ResponseWriter, r *http.Request) {
 		item := schema.Item {
 			Name: r.FormValue("name"),
@@ -204,6 +200,13 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+
+		// Flush to make sure the documents got written.
+		_, err = client.Flush().Index(indexName).Do(ctx)
+		if err != nil {
+			panic(err)
+		}
+
 		fmt.Printf("Indexed item %s to index %s, type %s\n", putItem.Id, putItem.Index, putItem.Type)
 
 		if err := templates.ExecuteTemplate(w, "create.html", item); err != nil {
@@ -211,6 +214,61 @@ func main() {
 		}
 	})
 
+	// Edit item page
+	http.HandleFunc("/edit/", func(w http.ResponseWriter, r *http.Request) {
+		// Get item
+		var item schema.Item
+		if id := r.FormValue("id"); id != "" {
+			// Get item with specified ID
+			itemResult, err := client.Get().
+				Index(indexName).
+				Type("item").
+				Id(id).
+				Do(ctx)
+			if err != nil {
+				panic(err)
+			}
+			if itemResult.Found {
+				fmt.Printf("Got document %s in version %d from index %s, type %s\n", itemResult.Id, itemResult.Version, itemResult.Index, itemResult.Type)
+				err := json.Unmarshal(*itemResult.Source, &item)
+				if err != nil {
+					panic(err)
+				}
+			} else {
+				fmt.Printf("Document %s not found", id)
+			}
+		}
+		if r.Method == "POST" {
+			if id := r.FormValue("id"); id != "" {
+				update, err := client.Update().Index(indexName).Type("item").Id(id).
+					Script(elastic.NewScriptInline("ctx._source.name = params.name").Lang("painless").Param("name", item.Name)).
+					Upsert(map[string]interface{}{"name": ""}).
+					Do(ctx)
+				if err != nil {
+					panic(err)
+				}
+				fmt.Printf("New version of item %q is now %d\n", update.Id, update.Version)
+				// Flush to make sure the documents got written.
+				_, err = client.Flush().Index(indexName).Do(ctx)
+				if err != nil {
+					panic(err)
+				}
+				// Flush to make sure the documents got written.
+				_, err = client.Flush().Index(indexName).Do(ctx)
+				if err != nil {
+					panic(err)
+				}
+
+				http.Redirect(w, r, "/items?id=" + id, http.StatusSeeOther)
+			}
+		}
+
+		if err := templates.ExecuteTemplate(w, "edit.html", item); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+
+	// Search item.
 	http.HandleFunc("/search/", func(w http.ResponseWriter, r *http.Request) {
 		var items []schema.Item
 		if name := r.FormValue("name"); name != "" {
@@ -219,7 +277,7 @@ func main() {
 				Index(indexName).
 				Query(termQuery).
 				Sort("name", true).
-				From(0).Size(10).
+				From(0).Size(100).
 				Pretty(true).
 				Do(ctx)
 			if err != nil {
@@ -242,7 +300,7 @@ func main() {
 					}
 
 					// Work with item
-					fmt.Printf("Item by %s: %s\n", t.Name, t.Description)
+					fmt.Printf("Item named %s: %s\n", t.Name, t.Description)
 					items = append(items, t)
 				}
 			} else {
