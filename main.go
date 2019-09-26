@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"gopkg.in/olivere/elastic.v6"
+	"html/template"
+	"net/http"
+
 	//"html/template"
 	//"net/http"
 	"reflect"
@@ -47,6 +50,9 @@ const mapping = `
 	"mappings":{
 		"item":{
 			"properties":{
+				"id": {
+					"type":"text"
+				},
 				"name":{
 					"type":"keyword"
 				},
@@ -234,35 +240,67 @@ func main() {
 	}
 	fmt.Printf("New version of item %q is now %d\n", update.Id, update.Version)
 
-	// ...
+	//// Delete an index.
+	//deleteIndex, err := client.DeleteIndex("inventopedia").Do(ctx)
+	//if err != nil {
+	//	// Handle error
+	//	panic(err)
+	//}
+	//if !deleteIndex.Acknowledged {
+	//	// Not acknowledged
+	//}
 
-	// Delete an index.
-	deleteIndex, err := client.DeleteIndex("inventopedia").Do(ctx)
-	if err != nil {
-		// Handle error
-		panic(err)
-	}
-	if !deleteIndex.Acknowledged {
-		// Not acknowledged
-	}
+	// Page
+	welcome := Welcome{"Nakama", time.Now().Format(time.Stamp)}
+	templates := template.Must(template.ParseFiles("templates/landing-page.html", "templates/item.html"))
+	http.Handle("/static/", //final url can be anything
+		http.StripPrefix("/static/",
+			http.FileServer(http.Dir("static"))))
 
-	//	welcome := Welcome{"Anonymous", time.Now().Format(time.Stamp)}
-	//	templates := template.Must(template.ParseFiles("templates/landing-page.html"))
-	//	http.Handle("/static/", //final url can be anything
-	//		http.StripPrefix("/static/",
-	//			http.FileServer(http.Dir("static"))))
-	//
-	//	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-	//		// Set welcome message name according to URL param
-	//		if name := r.FormValue("name"); name != "" {
-	//			welcome.Name = name
-	//		}
-	//
-	//		if err := templates.ExecuteTemplate(w, "landing-page.html", welcome); err != nil {
-	//			http.Error(w, err.Error(), http.StatusInternalServerError)
-	//		}
-	//	})
-	//
-	//	fmt.Println("Listening on port :8080")
-	//	fmt.Println(http.ListenAndServe(":8080", nil))
+	// Landing page
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Set welcome message name according to URL param
+		if name := r.FormValue("name"); name != "" {
+			welcome.Name = name
+		}
+
+		if err := templates.ExecuteTemplate(w, "landing-page.html", welcome); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+
+	// Item page
+	http.HandleFunc("/items/", func(w http.ResponseWriter, r *http.Request) {
+		// Set welcome message name according to URL param
+		var item Item
+
+		if id := r.FormValue("id"); id != "" {
+			// Get item with specified ID
+			itemResult, err := client.Get().
+				Index("inventopedia").
+				Type("item").
+				Id(id).
+				Do(ctx)
+			if err != nil {
+				// Handle error
+				panic(err)
+			}
+			if itemResult.Found {
+				fmt.Printf("Got document %s in version %d from index %s, type %s\n", itemResult.Id, itemResult.Version, itemResult.Index, itemResult.Type)
+				err := json.Unmarshal(*itemResult.Source, &item)
+				if err != nil {
+					panic(err)
+				}
+			} else {
+				fmt.Printf("Document %s not found", id)
+			}
+		}
+
+		if err := templates.ExecuteTemplate(w, "item.html", item); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+
+	fmt.Println("Listening on port :8080")
+	fmt.Println(http.ListenAndServe(":8080", nil))
 }
