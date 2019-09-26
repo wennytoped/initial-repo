@@ -142,7 +142,7 @@ func main() {
 		}
 		if r.Method == "POST" {
 			if name := r.FormValue("name"); name != "" {
-				http.Redirect(w, r, "/search?name=" + name, http.StatusSeeOther)
+				http.Redirect(w, r, "/search?name="+name, http.StatusSeeOther)
 			}
 		}
 
@@ -185,8 +185,8 @@ func main() {
 
 	// Create item page
 	http.HandleFunc("/create/", func(w http.ResponseWriter, r *http.Request) {
-		item := schema.Item {
-			Name: r.FormValue("name"),
+		item := schema.Item{
+			Name:        r.FormValue("name"),
 			Description: r.FormValue("description"),
 		}
 
@@ -259,7 +259,7 @@ func main() {
 					panic(err)
 				}
 
-				http.Redirect(w, r, "/items?id=" + id, http.StatusSeeOther)
+				http.Redirect(w, r, "/items?id="+id, http.StatusSeeOther)
 			}
 		}
 
