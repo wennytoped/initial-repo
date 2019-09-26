@@ -7,8 +7,7 @@ import (
 
 // Welcome message
 type Welcome struct {
-	Name string
-	Time string
+	Username string
 }
 
 // Item is a structure used for serializing/deserializing data in Elasticsearch.

@@ -3,9 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <link rel="stylesheet" href="/static/stylesheets/landing-page.css">
-    <title>Welcome {{.Name}}</title>
+    <title>Search an item</title>
 </head>
 <body>
-    <div class="welcome center">Welcome {{.Name}}, it is {{.Time}}</div>
+    <div>Welcome, {{ .Username }}!</div>
+    <div class="content">
+        <div class="logo center">
+            <h1>Inventosearch</h1>
+        </div>
+        <div class="searchbox center">
+            <form method="POST">
+                <input class="searchfield" type="search" name="name">
+                <input type="submit" value="Search">
+            </form>
+        </div>
+    </div>
 </body>
 </html>

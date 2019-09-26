@@ -9,8 +9,9 @@ import (
 	"invento-search/schema"
 	"net/http"
 	"reflect"
-	"time"
 )
+
+const indexName = "items"
 
 const mapping = `
 {
@@ -53,28 +54,32 @@ const mapping = `
 }`
 
 func main() {
+	// Create context.
 	ctx := context.Background()
 
+	// Create new client.
 	client, err := elastic.NewClient()
 	if err != nil {
 		panic(err)
 	}
 
-	// Getting the ES version number is quite common, so there's a shortcut
-	esversion, err := client.ElasticsearchVersion("http://127.0.0.1:9200")
+	// Delete an index.
+	deleteIndex, err := client.DeleteIndex(indexName).Do(ctx)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("Elasticsearch version %s\n", esversion)
+	if !deleteIndex.Acknowledged {
+		fmt.Printf("Index not acknowledged")
+	}
 
-	// Check if inventopedia index exists.
-	exists, err := client.IndexExists("inventopedia").Do(ctx)
+	// Check if index already exists.
+	exists, err := client.IndexExists(indexName).Do(ctx)
 	if err != nil {
 		panic(err)
 	}
 	if !exists {
 		// Create a new index.
-		createIndex, err := client.CreateIndex("inventopedia").BodyString(mapping).Do(ctx)
+		createIndex, err := client.CreateIndex(indexName).BodyString(mapping).Do(ctx)
 		if err != nil {
 			panic(err)
 		}
@@ -83,64 +88,50 @@ func main() {
 		}
 	}
 
-	// Index a item (using JSON serialization)
-	item1 := schema.Item{Name: "Chair", Description: "A green chair imported from the USA.", Stock: 0}
-	put1, err := client.Index().
-		Index("inventopedia").
-		Type("item").
-		Id("1").
-		BodyJson(item1).
-		Do(ctx)
+	// Populate some items.
+	items := []schema.Item{
+		{Name: "pedestal", Description: "3-tier white-colored pedestal.", Stock: 1},
+		{Name: "desk", Description: "Black wooden desk.", Stock: 15},
+		{Name: "monitor", Description: "LG monitor complete with cable.", Stock: 2},
+		{Name: "laptop", Description: "Macbook Pro 2017 13-inch.", Stock: 30},
+		{Name: "mouse", Description: "Logitech M100 black mouse.", Stock: 4},
+		{Name: "mouse pad", Description: "Plain black mouse pad.", Stock: 100},
+		{Name: "mug", Description: "Mug with Tokopedia logo.", Stock: 55},
+		{Name: "notebook", Description: "A4 notebook with strap.", Stock: 6},
+		{Name: "shirt", Description: "Black t-shirt with Tokopedia logo.", Stock: 9},
+		{Name: "green chair", Description: "Green chair from the USA.", Stock: 9},
+		{Name: "black chair", Description: "Black chair from the UK.", Stock: 9},
+	}
+	for _, item := range items {
+		_, err = client.Index().
+			Index(indexName).
+			Type("item").
+			BodyJson(item).
+			Do(ctx)
+	}
 	if err != nil {
-		// Handle error
 		panic(err)
 	}
-	fmt.Printf("Indexed item %s to index %s, type %s\n", put1.Id, put1.Index, put1.Type)
-
-	// Index a second item (by string)
-	item2 := `{"name" : "Laptop", "description" : "Macbook Pro 15-inch"}`
-	put2, err := client.Index().
-		Index("inventopedia").
-		Type("item").
-		Id("2").
-		BodyString(item2).
-		Do(ctx)
-	if err != nil {
-		// Handle error
-		panic(err)
-	}
-	fmt.Printf("Indexed item %s to index %s, type %s\n", put2.Id, put2.Index, put2.Type)
 
 	// Flush to make sure the documents got written.
-	_, err = client.Flush().Index("inventopedia").Do(ctx)
+	_, err = client.Flush().Index(indexName).Do(ctx)
 	if err != nil {
 		panic(err)
 	}
 
 	// Update a item by the update API of Elasticsearch.
 	// We just increment the number of stock.
-	update, err := client.Update().Index("inventopedia").Type("item").Id("1").
+	update, err := client.Update().Index(indexName).Type("item").Id("1").
 		Script(elastic.NewScriptInline("ctx._source.stock += params.num").Lang("painless").Param("num", 1)).
 		Upsert(map[string]interface{}{"stock": 0}).
 		Do(ctx)
 	if err != nil {
-		// Handle error
 		panic(err)
 	}
 	fmt.Printf("New version of item %q is now %d\n", update.Id, update.Version)
 
-	//// Delete an index.
-	//deleteIndex, err := client.DeleteIndex("inventopedia").Do(ctx)
-	//if err != nil {
-	//	// Handle error
-	//	panic(err)
-	//}
-	//if !deleteIndex.Acknowledged {
-	//	// Not acknowledged
-	//}
-
 	// Page
-	welcome := schema.Welcome{"Nakama", time.Now().Format(time.Stamp)}
+	welcome := schema.Welcome{"Nakama"}
 	templates := template.Must(template.ParseFiles("templates/landing-page.html", "templates/item.html", "templates/create.html", "templates/list.html"))
 	http.Handle("/static/", //final url can be anything
 		http.StripPrefix("/static/",
@@ -149,8 +140,13 @@ func main() {
 	// Landing page
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Set welcome message name according to URL param
-		if name := r.FormValue("name"); name != "" {
-			welcome.Name = name
+		if username := r.FormValue("username"); username != "" {
+			welcome.Username = username
+		}
+		if r.Method == "POST" {
+			if name := r.FormValue("name"); name != "" {
+				http.Redirect(w, r, "/search?name=" + name, http.StatusSeeOther)
+			}
 		}
 
 		if err := templates.ExecuteTemplate(w, "landing-page.html", welcome); err != nil {
@@ -166,7 +162,7 @@ func main() {
 		if id := r.FormValue("id"); id != "" {
 			// Get item with specified ID
 			itemResult, err := client.Get().
-				Index("inventopedia").
+				Index(indexName).
 				Type("item").
 				Id(id).
 				Do(ctx)
@@ -193,15 +189,15 @@ func main() {
 	// Create item page
 	// Landing page
 	http.HandleFunc("/create/", func(w http.ResponseWriter, r *http.Request) {
-		item := schema.Item{
-			Name:        r.FormValue("name"),
+		item := schema.Item {
+			Name: r.FormValue("name"),
 			Description: r.FormValue("description"),
 		}
 
 		// Index a item (using JSON serialization)
 		newItem := schema.Item{Name: item.Name, Description: item.Description, Stock: 1}
 		putItem, err := client.Index().
-			Index("inventopedia").
+			Index(indexName).
 			Type("item").
 			BodyJson(newItem).
 			Do(ctx)
@@ -218,15 +214,14 @@ func main() {
 	http.HandleFunc("/search/", func(w http.ResponseWriter, r *http.Request) {
 		var items []schema.Item
 		if name := r.FormValue("name"); name != "" {
-			// Search with a term query
 			termQuery := elastic.NewTermQuery("name", name)
 			searchResult, err := client.Search().
-				Index("inventopedia"). // search in index "inventopedia"
-				Query(termQuery). // specify the query
-				Sort("name", true). // sort by "name" field, ascending
-				From(0).Size(10). // take documents 0-9
-				Pretty(true). // pretty print request and response JSON
-				Do(ctx) // execute
+				Index(indexName).
+				Query(termQuery).
+				Sort("name", true).
+				From(0).Size(10).
+				Pretty(true).
+				Do(ctx)
 			if err != nil {
 				panic(err)
 			}
@@ -238,7 +233,6 @@ func main() {
 				}
 			}
 
-			// Here's how you iterate through results with full control over each step.
 			if searchResult.Hits.TotalHits > 0 {
 				for _, hit := range searchResult.Hits.Hits {
 					var t schema.Item
@@ -252,7 +246,6 @@ func main() {
 					items = append(items, t)
 				}
 			} else {
-				// No hits
 				fmt.Print("Found no items\n")
 			}
 		}
