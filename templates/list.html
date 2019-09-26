@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<body>
+    <h1>Items:</h1>
+    <div class="item center">
+        {{range .}}
+            <div class="item">
+                Name: {{ .Name }}
+                Description: {{ .Description }}
+            </div>
+            <br/>
+        {{end}}
+    </div>
+</body>
+</html>
